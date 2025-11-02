@@ -18,6 +18,11 @@ load_dotenv()
 
 app = Flask(__name__)
 
+# Simple in-memory cache to reduce Yahoo Finance API calls
+# Cache format: {ticker: {'data': response_data, 'timestamp': unix_time}}
+request_cache = {}
+CACHE_DURATION = 300  # 5 minutes in seconds
+
 # Function to recursively replace NaN values with None
 def clean_nan(obj):
     if isinstance(obj, dict):
@@ -52,8 +57,9 @@ class StockAnalyzer:
                 # Check if we got valid data - yfinance returns minimal dict if ticker invalid
                 if not info or len(info) < 5:
                     if attempt < max_retries - 1:
-                        print(f"Insufficient data, retrying in {attempt + 1} seconds...")
-                        time.sleep(attempt + 1)
+                        wait_time = (attempt + 1) * 3  # 3, 6, 9 seconds
+                        print(f"Insufficient data, retrying in {wait_time} seconds...")
+                        time.sleep(wait_time)
                         # Recreate ticker object for fresh connection
                         self.stock = yf.Ticker(self.ticker)
                         continue
@@ -71,13 +77,28 @@ class StockAnalyzer:
                 break
                 
             except Exception as e:
-                print(f"Attempt {attempt + 1} failed with error: {e}")
-                if attempt < max_retries - 1:
-                    time.sleep(attempt + 1)
-                    self.stock = yf.Ticker(self.ticker)
-                    continue
+                error_msg = str(e)
+                print(f"Attempt {attempt + 1} failed with error: {error_msg}")
+                
+                # Check if it's a rate limit error
+                if "rate limit" in error_msg.lower() or "too many requests" in error_msg.lower():
+                    if attempt < max_retries - 1:
+                        wait_time = (attempt + 1) * 5  # 5, 10, 15 seconds for rate limits
+                        print(f"Rate limited. Waiting {wait_time} seconds before retry...")
+                        time.sleep(wait_time)
+                        self.stock = yf.Ticker(self.ticker)
+                        continue
+                    else:
+                        return {'error': f'Yahoo Finance is rate limiting requests. Please try again in a few minutes.'}
                 else:
-                    return {'error': f'Failed to fetch data for "{self.ticker}": {str(e)}'}
+                    # Other errors - shorter wait
+                    if attempt < max_retries - 1:
+                        wait_time = (attempt + 1) * 2
+                        time.sleep(wait_time)
+                        self.stock = yf.Ticker(self.ticker)
+                        continue
+                    else:
+                        return {'error': f'Failed to fetch data for "{self.ticker}": {error_msg}'}
         
         # If we still don't have info after all retries
         if not info or len(info) < 5:
@@ -1104,6 +1125,15 @@ def analyze():
                     f'Ticker symbols are usually 1-10 characters.'
         }), 400
     
+    # Check cache first to reduce API calls
+    current_time = time.time()
+    if ticker in request_cache:
+        cached_data = request_cache[ticker]
+        cache_age = current_time - cached_data['timestamp']
+        if cache_age < CACHE_DURATION:
+            print(f"Returning cached data for {ticker} (age: {int(cache_age)}s)")
+            return jsonify(cached_data['data'])
+    
     try:
         analyzer = StockAnalyzer(ticker)
         
@@ -1147,6 +1177,14 @@ def analyze():
         
         # Clean NaN values before returning
         response = clean_nan(response)
+        
+        # Cache the successful response
+        request_cache[ticker] = {
+            'data': response,
+            'timestamp': current_time
+        }
+        print(f"Cached response for {ticker}")
+        
         return jsonify(response)
     
     except Exception as e:

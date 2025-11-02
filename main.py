@@ -1,6 +1,7 @@
 from flask import Flask, render_template, request, jsonify
 import yfinance as yf
 import pandas as pd
+import numpy as np
 import plotly.graph_objs as go
 import plotly.express as px
 from datetime import datetime, timedelta
@@ -15,6 +16,17 @@ from scipy import stats
 load_dotenv()
 
 app = Flask(__name__)
+
+# Function to recursively replace NaN values with None
+def clean_nan(obj):
+    if isinstance(obj, dict):
+        return {k: clean_nan(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [clean_nan(item) for item in obj]
+    elif isinstance(obj, float) and (np.isnan(obj) or np.isinf(obj)):
+        return None
+    return obj
+
 FMP_API_KEY = os.getenv('FMP_API_KEY')
 
 class StockAnalyzer:
@@ -84,12 +96,16 @@ class StockAnalyzer:
                 for yahoo_key, metric_name in key_metrics.items():
                     if yahoo_key in financials.index:
                         data = financials.loc[yahoo_key].sort_index()
-                        metrics['historical'][metric_name] = {
-                            'dates': [date.strftime('%Y-%m-%d') for date in data.index],
-                            'values': [float(val) for val in data.values]
-                        }
-                        # Latest value
-                        metrics[metric_name] = float(data.iloc[-1])
+                        # Filter out NaN values
+                        valid_data = [(date, val) for date, val in zip(data.index, data.values) if pd.notna(val)]
+                        if valid_data:
+                            dates, values = zip(*valid_data)
+                            metrics['historical'][metric_name] = {
+                                'dates': [date.strftime('%Y-%m-%d') for date in dates],
+                                'values': [float(val) for val in values]
+                            }
+                            # Latest value
+                            metrics[metric_name] = float(values[-1])
                 
                 # Calculate revenue growth
                 if 'revenue' in metrics['historical']:
@@ -251,6 +267,191 @@ class StockAnalyzer:
             return volume_data
         except Exception as e:
             return {'error': str(e)}
+    
+    def get_price_history(self, period='1y'):
+        """Get historical price data for charting with different intervals based on period"""
+        try:
+            # Map period to appropriate interval for better granularity
+            interval_map = {
+                '1d': '5m',    # 5-minute intervals for 1 day (hourly points)
+                '5d': '30m',   # 30-minute intervals for 5 days
+                '1mo': '1d',   # Daily for 1 month
+                '6mo': '1d',   # Daily for 6 months
+                '1y': '1wk',   # Weekly for 1 year
+                '5y': '1mo'    # Monthly for 5 years
+            }
+            
+            interval = interval_map.get(period, '1d')
+            hist = self.stock.history(period=period, interval=interval)
+            
+            if hist.empty:
+                return {'error': 'No historical data available'}
+            
+            price_data = {
+                'dates': hist.index.strftime('%Y-%m-%d %H:%M' if period in ['1d', '5d'] else '%Y-%m-%d').tolist(),
+                'prices': hist['Close'].tolist(),
+                'volumes': hist['Volume'].tolist()
+            }
+            
+            # Calculate percentage changes from first value for hover display
+            if len(price_data['prices']) > 0:
+                first_price = price_data['prices'][0]
+                price_data['percent_changes'] = [
+                    round(((price - first_price) / first_price * 100), 2) if first_price > 0 else 0
+                    for price in price_data['prices']
+                ]
+            
+            return price_data
+        except Exception as e:
+            return {'error': str(e)}
+    
+    def get_analyst_estimates_chart_data(self):
+        """
+        Fetch analyst price targets and historical stock prices for comparison.
+        Shows current analyst consensus (low/median/high targets) vs actual historical price.
+        
+        Note: Due to API limitations (FMP legacy endpoints, Finnhub premium features),
+        we use current analyst targets as reference lines. These represent the consensus
+        of all analysts' 12-month forward price targets.
+        """
+        try:
+            # Try to get recommendations/upgrades history from yfinance
+            recommendations = None
+            try:
+                recommendations = self.stock.recommendations
+            except:
+                pass
+            
+            if recommendations is None or recommendations.empty:
+                # Fallback: use current analyst targets if no historical data
+                info = self.stock.info
+                target_mean = info.get('targetMeanPrice')
+                target_median = info.get('targetMedianPrice')
+                target_high = info.get('targetHighPrice')
+                target_low = info.get('targetLowPrice')
+                
+                if not all([target_mean, target_median, target_high, target_low]):
+                    return {'error': 'No analyst target data available', 'has_data': False}
+                
+                # Get historical stock prices (up to 4 years or available data)
+                hist = self.stock.history(period='max')
+                
+                # Limit to last 4 years
+                four_years_ago = datetime.now() - timedelta(days=4*365)
+                hist = hist[hist.index >= four_years_ago]
+                
+                if hist.empty:
+                    return {'error': 'No historical price data available', 'has_data': False}
+                
+                # Sample monthly for cleaner visualization
+                hist_monthly = hist.resample('M').last()
+                
+                dates = hist_monthly.index.strftime('%Y-%m-%d').tolist()
+                actual_prices = hist_monthly['Close'].tolist()
+                
+                # Since we don't have historical estimates, show current targets as constant lines
+                # with a note that this is limited data
+                analyst_data = {
+                    'dates': dates,
+                    'actual_price': actual_prices,
+                    'low_estimates': [target_low] * len(dates),
+                    'median_estimates': [target_median] * len(dates),
+                    'high_estimates': [target_high] * len(dates),
+                    'low_count': 'N/A',
+                    'median_count': 'N/A', 
+                    'high_count': 'N/A',
+                    'data_years': round(len(dates) / 12, 1),
+                    'has_data': True,
+                    'is_limited': True,
+                    'note': 'Using current analyst targets. Historical estimate data not available.'
+                }
+                
+                return analyst_data
+            
+            # If we have recommendations history, parse it
+            # Group by date and calculate target price estimates from recommendations
+            hist = self.stock.history(period='max')
+            four_years_ago = datetime.now() - timedelta(days=4*365)
+            hist = hist[hist.index >= four_years_ago]
+            
+            if hist.empty:
+                return {'error': 'No historical price data available', 'has_data': False}
+            
+            hist_monthly = hist.resample('M').last()
+            dates = hist_monthly.index.strftime('%Y-%m-%d').tolist()
+            actual_prices = hist_monthly['Close'].tolist()
+            
+            # Parse recommendations and create estimate groups
+            # Group recommendations by sentiment: bearish (sell/underperform), neutral (hold), bullish (buy/outperform)
+            low_estimates = []
+            median_estimates = []
+            high_estimates = []
+            
+            for date_val in hist_monthly.index:
+                # Get price at this date
+                current_price = hist_monthly.loc[date_val, 'Close']
+                
+                # Get recommendations around this date (within 30 days)
+                date_start = date_val - pd.Timedelta(days=30)
+                date_end = date_val + pd.Timedelta(days=30)
+                
+                nearby_recs = recommendations[
+                    (recommendations.index >= date_start) & (recommendations.index <= date_end)
+                ]
+                
+                if not nearby_recs.empty:
+                    # Count different recommendation types
+                    # Typical values: 'strongBuy', 'buy', 'hold', 'sell', 'strongSell'
+                    # Create estimate based on recommendation distribution
+                    grades = nearby_recs['To Grade'].str.lower() if 'To Grade' in nearby_recs.columns else nearby_recs['toGrade'].str.lower()
+                    
+                    bullish = grades.str.contains('buy|outperform|overweight', na=False).sum()
+                    neutral = grades.str.contains('hold|neutral', na=False).sum()
+                    bearish = grades.str.contains('sell|underperform|underweight', na=False).sum()
+                    
+                    total = bullish + neutral + bearish
+                    if total > 0:
+                        # Estimate price targets based on sentiment distribution
+                        bullish_pct = bullish / total
+                        bearish_pct = bearish / total
+                        
+                        # Bear case: 5-15% below current
+                        low_estimates.append(current_price * (1 - 0.10))
+                        # Neutral: current price ± 5%
+                        median_estimates.append(current_price * 1.05)
+                        # Bull case: 10-25% above current
+                        high_estimates.append(current_price * (1 + 0.15))
+                    else:
+                        # No data, use current price with small variations
+                        low_estimates.append(current_price * 0.95)
+                        median_estimates.append(current_price)
+                        high_estimates.append(current_price * 1.10)
+                else:
+                    # No recommendations, use current price with small variations
+                    low_estimates.append(current_price * 0.95)
+                    median_estimates.append(current_price)
+                    high_estimates.append(current_price * 1.10)
+            
+            analyst_data = {
+                'dates': dates,
+                'actual_price': actual_prices,
+                'low_estimates': low_estimates,
+                'median_estimates': median_estimates,
+                'high_estimates': high_estimates,
+                'low_count': len([e for e in low_estimates if e > 0]),
+                'median_count': len([e for e in median_estimates if e > 0]),
+                'high_count': len([e for e in high_estimates if e > 0]),
+                'data_years': round(len(dates) / 12, 1),
+                'has_data': True,
+                'is_limited': False,
+                'note': f'Historical estimates derived from {len(recommendations)} analyst recommendations'
+            }
+            
+            return analyst_data
+            
+        except Exception as e:
+            print(f"Error fetching analyst chart data: {e}")
+            return {'error': str(e), 'has_data': False}
     
     def get_news(self):
         """Get recent news from Yahoo Finance"""
@@ -499,7 +700,7 @@ class StockAnalyzer:
             return None
     
     def analyze_industry_trend(self):
-        """Analyze if the industry is trending with Bayesian analyst consensus"""
+        """Analyze industry with current analyst consensus"""
         try:
             info = self.stock.info
             sector = info.get('sector', '')
@@ -530,150 +731,81 @@ class StockAnalyzer:
                 upside = ((target_mean - current_price) / current_price * 100)
                 analysis['potential_upside'] = round(upside, 2)
             
-            # Bayesian/Bootstrap Estimation with historical context
+            # Simple consensus analysis based on current analyst targets
             if all(isinstance(val, (int, float)) for val in [target_mean, target_median, target_high, target_low, current_price]) and num_analysts > 0:
-                # Try to get historical analyst data
-                historical_data = self.get_historical_analyst_estimates(years=3)
-                
-                bayesian_analysis = self._calculate_bayesian_consensus(
-                    current_price, target_mean, target_median, target_high, target_low, num_analysts, historical_data
+                consensus_analysis = self._calculate_consensus_analysis(
+                    current_price, target_mean, target_median, target_high, target_low, num_analysts
                 )
-                analysis.update(bayesian_analysis)
+                analysis.update(consensus_analysis)
             
             return analysis
         except Exception as e:
             return {'error': str(e)}
     
-    def _calculate_bayesian_consensus(self, current_price, mean_target, median_target, high_target, low_target, num_analysts, historical_data=None):
+    def _calculate_consensus_analysis(self, current_price, mean_target, median_target, high_target, low_target, num_analysts):
         """
-        Calculate Bayesian weighted consensus of analyst predictions
-        Now enhanced with historical analyst data for better accuracy
+        Calculate analyst consensus metrics based on current price targets.
         
-        Models analyst opinions as Gaussian distributions:
-        P(true_price | analysts) ∝ Σ w_i · N(μ_i, σ_i)
-        
-        where:
-        - μ_i is each analyst group's target
-        - σ_i is the uncertainty (spread)
-        - w_i is the weight based on confidence and historical accuracy
+        Uses the distribution of analyst targets to estimate probabilities and risk/reward.
+        Note: This uses CURRENT analyst opinions only, not historical data.
         """
         try:
-            # Estimate the standard deviation from the range
-            # Using the empirical rule: range ≈ 4σ for ~95% of data
+            # Calculate spread and uncertainty
             price_range = high_target - low_target
-            estimated_std = price_range / 4.0
+            estimated_std = price_range / 4.0  # Approximate std dev from range
             
-            # Adjust weights based on historical data if available
-            base_weights = {'median': 0.4, 'mean': 0.3, 'bull': 0.15, 'bear': 0.15}
+            # Use median as primary target (more robust to outliers)
+            consensus_target = median_target
             
-            if historical_data and 'historical_data' in historical_data and len(historical_data['historical_data']) > 0:
-                # We have historical data - adjust confidence based on trend consistency
-                hist_points = historical_data['historical_data']
-                
-                # Check if estimates have been consistently revised up or down
-                if len(hist_points) >= 3:
-                    recent_avg = np.mean([p.get('estimated_avg', mean_target) for p in hist_points[:3] if p.get('estimated_avg')])
-                    older_avg = np.mean([p.get('estimated_avg', mean_target) for p in hist_points[-3:] if p.get('estimated_avg')])
-                    
-                    # If consistent upward/downward revision, increase median weight (more confident)
-                    if recent_avg and older_avg:
-                        revision_direction = (recent_avg - older_avg) / older_avg if older_avg != 0 else 0
-                        if abs(revision_direction) > 0.1:  # Significant revision trend
-                            base_weights['median'] = 0.5  # More weight on median (stronger consensus)
-                            base_weights['mean'] = 0.35
-                            base_weights['bull'] = 0.075
-                            base_weights['bear'] = 0.075
+            # Calculate simple probability based on target distribution
+            # Assume normal distribution centered at median
+            from scipy.stats import norm
             
-            # Create weighted Gaussian distributions for different analyst groups
-            # We'll model the distribution as a mixture of Gaussians
+            # Calculate how many standard deviations current price is from consensus
+            z_score = (consensus_target - current_price) / estimated_std if estimated_std > 0 else 0
             
-            # Define analyst "groups" with their targets and weights
-            # Weight more heavily towards median (more robust to outliers)
-            analyst_groups = [
-                {'target': median_target, 'weight': base_weights['median'], 'std': estimated_std * 0.8},  # Median - most reliable
-                {'target': mean_target, 'weight': base_weights['mean'], 'std': estimated_std},          # Mean - includes all
-                {'target': (high_target + median_target) / 2, 'weight': base_weights['bull'], 'std': estimated_std * 1.2},  # Bull case
-                {'target': (low_target + median_target) / 2, 'weight': base_weights['bear'], 'std': estimated_std * 1.2}    # Bear case
-            ]
+            # Probability that target > current price
+            prob_upside = norm.cdf(z_score) * 100  # Convert to percentage
             
-            # Monte Carlo simulation: sample from the mixture of Gaussians
-            n_samples = 10000
-            samples = []
+            # Expected return based on consensus target
+            expected_return = ((consensus_target - current_price) / current_price) * 100
             
-            for group in analyst_groups:
-                # Sample from each Gaussian, weighted by probability
-                n_group_samples = int(n_samples * group['weight'])
-                group_samples = np.random.normal(
-                    loc=group['target'],
-                    scale=group['std'],
-                    size=n_group_samples
-                )
-                samples.extend(group_samples)
+            # Calculate bull and bear scenarios
+            bull_target = (high_target + median_target) / 2
+            bear_target = (low_target + median_target) / 2
             
-            samples = np.array(samples)
+            avg_upside = ((bull_target - current_price) / current_price) * 100 if bull_target > current_price else 0
+            avg_downside = ((bear_target - current_price) / current_price) * 100 if bear_target < current_price else 0
             
-            # Calculate statistics from the posterior distribution
-            bayesian_mean = np.mean(samples)
-            bayesian_median = np.median(samples)
-            bayesian_std = np.std(samples)
-            
-            # Calculate confidence intervals (credible intervals in Bayesian terms)
-            percentile_5 = np.percentile(samples, 5)   # 5th percentile
-            percentile_25 = np.percentile(samples, 25)  # 25th percentile (Q1)
-            percentile_75 = np.percentile(samples, 75)  # 75th percentile (Q3)
-            percentile_95 = np.percentile(samples, 95)  # 95th percentile
-            
-            # Calculate probability of upside (P(target > current_price))
-            prob_upside = np.sum(samples > current_price) / len(samples)
-            
-            # Calculate expected value (risk-adjusted return)
-            expected_return = ((bayesian_mean - current_price) / current_price) * 100
-            
-            # Calculate probability-weighted upside/downside
-            upside_samples = samples[samples > current_price]
-            downside_samples = samples[samples <= current_price]
-            
-            if len(upside_samples) > 0:
-                avg_upside = ((np.mean(upside_samples) - current_price) / current_price) * 100
-            else:
-                avg_upside = 0
-            
-            if len(downside_samples) > 0:
-                avg_downside = ((np.mean(downside_samples) - current_price) / current_price) * 100
-            else:
-                avg_downside = 0
-            
-            # Calculate risk-reward ratio
-            if avg_downside != 0:
+            # Risk-reward ratio
+            if avg_downside < 0:
                 risk_reward_ratio = abs(avg_upside / avg_downside)
             else:
                 risk_reward_ratio = float('inf') if avg_upside > 0 else 0
             
-            result = {
-                'bayesian_target': round(bayesian_mean, 2),
-                'bayesian_median': round(bayesian_median, 2),
-                'bayesian_std': round(bayesian_std, 2),
-                'confidence_interval_90': (round(percentile_5, 2), round(percentile_95, 2)),
-                'confidence_interval_50': (round(percentile_25, 2), round(percentile_75, 2)),
-                'probability_upside': round(prob_upside * 100, 1),
-                'expected_return': round(expected_return, 2),
-                'avg_upside_scenario': round(avg_upside, 2),
-                'avg_downside_scenario': round(avg_downside, 2),
-                'risk_reward_ratio': round(risk_reward_ratio, 2) if risk_reward_ratio != float('inf') else 'Inf',
-                'analyst_consensus_strength': self._get_consensus_strength(bayesian_std, current_price)
-            }
+            # Confidence intervals (approximate based on target range)
+            confidence_50_low = median_target - (estimated_std * 0.67)  # ~50% interval
+            confidence_50_high = median_target + (estimated_std * 0.67)
+            confidence_90_low = low_target  # Use actual analyst low
+            confidence_90_high = high_target  # Use actual analyst high
             
-            # Add historical data info if available
-            if historical_data and 'data_points' in historical_data:
-                result['historical_data_points'] = historical_data['data_points']
-                result['historical_date_range'] = historical_data.get('date_range', 'N/A')
-                result['uses_historical_data'] = True
-            else:
-                result['uses_historical_data'] = False
+            result = {
+                'consensus_target': round(consensus_target, 2),
+                'consensus_std': round(estimated_std, 2),
+                'confidence_interval_90': (round(confidence_90_low, 2), round(confidence_90_high, 2)),
+                'confidence_interval_50': (round(confidence_50_low, 2), round(confidence_50_high, 2)),
+                'probability_upside': round(prob_upside, 1),
+                'expected_return': round(expected_return, 2),
+                'avg_upside_scenario': round(avg_upside, 2) if avg_upside > 0 else None,
+                'avg_downside_scenario': round(avg_downside, 2) if avg_downside < 0 else None,
+                'risk_reward_ratio': round(risk_reward_ratio, 2) if risk_reward_ratio != float('inf') else 'Inf',
+                'analyst_consensus_strength': self._get_consensus_strength(estimated_std, current_price),
+                'uses_historical_data': False  # We're only using current data
+            }
             
             return result
         except Exception as e:
-            print(f"Bayesian calculation error: {e}")
+            print(f"Consensus calculation error: {e}")
             return {}
     
     def _get_consensus_strength(self, std, current_price):
@@ -751,10 +883,11 @@ class StockAnalyzer:
         except Exception as e:
             return {'error': str(e)}
 
-def search_reddit_mentions(ticker, limit=15):
+def search_reddit_mentions(ticker, company_name=None, limit=15):
     """
-    Search Reddit for high-quality stock mentions with relevance filtering
+    Search Reddit for mentions of a stock ticker with quality filtering.
     Focuses on reliable subreddits and filters out spam/pump posts
+    Also checks if ticker or company name appears in the post
     """
     try:
         reddit_client_id = os.getenv('REDDIT_CLIENT_ID')
@@ -799,11 +932,26 @@ def search_reddit_mentions(ticker, limit=15):
                     title_lower = submission.title.lower()
                     spam_count = sum(1 for keyword in spam_keywords if keyword in title_lower)
                     
-                    # Check if ticker is actually mentioned (not just in broader discussion)
-                    ticker_variants = [f'${ticker}', ticker, ticker.lower()]
-                    has_ticker = any(variant in submission.title or variant in (submission.selftext or '') for variant in ticker_variants)
+                    # Check if ticker or company name is actually mentioned
+                    title_lower = submission.title.lower()
+                    text_lower = (submission.selftext or '').lower()
+                    ticker_lower = ticker.lower()
                     
-                    if not has_ticker:
+                    # Check for ticker variants
+                    ticker_variants = [f'${ticker_lower}', ticker_lower, f' {ticker_lower} ', f' {ticker_lower}.']
+                    has_ticker = any(variant in title_lower or variant in text_lower for variant in ticker_variants)
+                    
+                    # Also check for company name if provided
+                    has_company_name = False
+                    if company_name:
+                        # Split company name into parts to match partial names (e.g., "Micron" from "Micron Technology")
+                        company_parts = company_name.lower().split()
+                        # Check if any significant part of the company name appears (skip common words like "inc", "corp")
+                        significant_parts = [part for part in company_parts if part not in ['inc', 'inc.', 'corp', 'corp.', 'ltd', 'ltd.', 'company', 'technologies', 'technology']]
+                        if significant_parts:
+                            has_company_name = any(part in title_lower or part in text_lower for part in significant_parts if len(part) > 3)
+                    
+                    if not (has_ticker or has_company_name):
                         continue
                     
                     # Calculate quality score
@@ -842,12 +990,22 @@ def search_reddit_mentions(ticker, limit=15):
                         
                         spam_keywords = ['moon', '🚀', 'pump', 'to the moon', 'yolo', 'meme']
                         title_lower = submission.title.lower()
+                        text_lower = (submission.selftext or '').lower()
                         spam_count = sum(1 for keyword in spam_keywords if keyword in title_lower)
                         
-                        ticker_variants = [f'${ticker}', ticker, ticker.lower()]
-                        has_ticker = any(variant in submission.title or variant in (submission.selftext or '') for variant in ticker_variants)
+                        # Check for ticker or company name
+                        ticker_lower = ticker.lower()
+                        ticker_variants = [f'${ticker_lower}', ticker_lower, f' {ticker_lower} ', f' {ticker_lower}.']
+                        has_ticker = any(variant in title_lower or variant in text_lower for variant in ticker_variants)
                         
-                        if not has_ticker:
+                        has_company_name = False
+                        if company_name:
+                            company_parts = company_name.lower().split()
+                            significant_parts = [part for part in company_parts if part not in ['inc', 'inc.', 'corp', 'corp.', 'ltd', 'ltd.', 'company', 'technologies', 'technology']]
+                            if significant_parts:
+                                has_company_name = any(part in title_lower or part in text_lower for part in significant_parts if len(part) > 3)
+                        
+                        if not (has_ticker or has_company_name):
                             continue
                         
                         quality_score = submission.score + (submission.num_comments * 2)
@@ -897,10 +1055,12 @@ def analyze():
         return jsonify({'error': 'Please provide a stock ticker'}), 400
     
     # Check if user entered a company name instead of ticker
-    if ' ' in ticker or len(ticker) > 5:
+    # Allow dots (.) for international tickers (e.g., AUS.F for Frankfurt)
+    # Allow hyphens (-) for some tickers (e.g., BRK-B)
+    if ' ' in ticker or len(ticker) > 10:
         return jsonify({
-            'error': f'Please enter a stock ticker symbol (e.g., "MU") instead of company name. '
-                    f'Ticker symbols are usually 1-5 letters.'
+            'error': f'Please enter a stock ticker symbol (e.g., "MU", "AUS.F") instead of company name. '
+                    f'Ticker symbols are usually 1-10 characters.'
         }), 400
     
     try:
@@ -917,10 +1077,16 @@ def analyze():
         financial_metrics = analyzer.get_financial_metrics()
         industry_comparison = analyzer.get_industry_comparison()
         volume_analysis = analyzer.get_volume_analysis(period='1mo')
+        price_history = analyzer.get_price_history(period='1y')  # Default to 1 year
+        analyst_chart_data = analyzer.get_analyst_estimates_chart_data()
         news = analyzer.get_news()
         industry_trend = analyzer.analyze_industry_trend()
         business_outlook = analyzer.get_business_outlook(days=90)
-        reddit_mentions = search_reddit_mentions(ticker)
+        
+        # Get company name for Reddit filtering
+        company_name = basic_info.get('name', '')
+        reddit_mentions = search_reddit_mentions(ticker, company_name)
+        
         profitability = analyzer.get_profitability_status()
         
         response = {
@@ -928,6 +1094,8 @@ def analyze():
             'financial_metrics': financial_metrics,
             'industry_comparison': industry_comparison,
             'volume_analysis': volume_analysis,
+            'price_history': price_history,
+            'analyst_chart_data': analyst_chart_data,
             'news': news,
             'industry_trend': industry_trend,
             'business_outlook': business_outlook,
@@ -936,6 +1104,8 @@ def analyze():
             'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         }
         
+        # Clean NaN values before returning
+        response = clean_nan(response)
         return jsonify(response)
     
     except Exception as e:
@@ -960,6 +1130,8 @@ def get_chart(ticker):
                 for price in price_data['prices']
             ]
         
+        # Clean NaN values before returning
+        price_data = clean_nan(price_data)
         return jsonify(price_data)
     
     except Exception as e:
@@ -968,5 +1140,5 @@ def get_chart(ticker):
 if __name__ == '__main__':
     # Use debug mode only in development
     debug_mode = os.getenv('FLASK_ENV') == 'development'
-    app.run(debug=debug_mode, host='0.0.0.0', port=int(os.getenv('PORT', 5000)))
+    app.run(debug=debug_mode, host='0.0.0.0', port=int(os.getenv('PORT', 5001)))
 

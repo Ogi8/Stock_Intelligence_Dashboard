@@ -14,9 +14,6 @@ import numpy as np
 from scipy import stats
 import time
 
-# Configure yfinance to be more reliable
-yf.pdr_override()
-
 load_dotenv()
 
 app = Flask(__name__)

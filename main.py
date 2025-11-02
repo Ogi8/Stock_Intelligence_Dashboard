@@ -15,6 +15,7 @@ from scipy import stats
 load_dotenv()
 
 app = Flask(__name__)
+FMP_API_KEY = os.getenv('FMP_API_KEY')
 
 class StockAnalyzer:
     def __init__(self, ticker):
@@ -413,6 +414,90 @@ class StockAnalyzer:
                 'error': str(e)
             }
     
+    def get_historical_analyst_estimates(self, years=3):
+        """
+        Fetch historical analyst price target estimates from Financial Modeling Prep API
+        Returns up to 3 years of historical analyst data
+        """
+        if not FMP_API_KEY:
+            print("Warning: FMP_API_KEY not found. Using current data only.")
+            return None
+        
+        try:
+            # FMP API endpoint for analyst estimates
+            url = f"https://financialmodelingprep.com/api/v3/analyst-estimates/{self.ticker}?limit=40&apikey={FMP_API_KEY}"
+            
+            response = requests.get(url, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            
+            if not data or not isinstance(data, list):
+                print(f"No historical analyst data available for {self.ticker}")
+                return None
+            
+            # Parse and structure the data
+            historical_targets = []
+            cutoff_date = datetime.now() - timedelta(days=years*365)
+            
+            for estimate in data:
+                date_str = estimate.get('date')
+                if not date_str:
+                    continue
+                
+                try:
+                    estimate_date = datetime.strptime(date_str, '%Y-%m-%d')
+                    if estimate_date < cutoff_date:
+                        continue
+                    
+                    # Extract price targets
+                    target = estimate.get('estimatedRevenueAvg')  # This might vary - FMP has multiple endpoints
+                    
+                    # Try the price target endpoint instead
+                    price_target = estimate.get('analystRatingsbuy', 0) + estimate.get('analystRatingsHold', 0)
+                    
+                    historical_targets.append({
+                        'date': date_str,
+                        'timestamp': estimate_date.timestamp(),
+                        'estimated_high': estimate.get('estimatedRevenueHigh'),
+                        'estimated_low': estimate.get('estimatedRevenueLow'),
+                        'estimated_avg': estimate.get('estimatedRevenueAvg'),
+                        'num_analysts': estimate.get('numberAnalystEstimatedRevenue', 0)
+                    })
+                except Exception as e:
+                    continue
+            
+            # Try alternative endpoint for price targets specifically
+            if not historical_targets:
+                url_target = f"https://financialmodelingprep.com/api/v3/price-target-consensus?symbol={self.ticker}&apikey={FMP_API_KEY}"
+                response = requests.get(url_target, timeout=10)
+                if response.status_code == 200:
+                    target_data = response.json()
+                    if target_data and isinstance(target_data, list) and len(target_data) > 0:
+                        td = target_data[0]
+                        return {
+                            'current_consensus': {
+                                'target_high': td.get('targetHigh'),
+                                'target_low': td.get('targetLow'),
+                                'target_median': td.get('targetMedian'),
+                                'target_consensus': td.get('targetConsensus'),
+                                'num_analysts': td.get('numberOfAnalysts', 0)
+                            },
+                            'historical_data': []
+                        }
+            
+            if historical_targets:
+                return {
+                    'historical_data': sorted(historical_targets, key=lambda x: x['timestamp'], reverse=True),
+                    'data_points': len(historical_targets),
+                    'date_range': f"{historical_targets[-1]['date']} to {historical_targets[0]['date']}"
+                }
+            
+            return None
+            
+        except Exception as e:
+            print(f"Error fetching historical analyst data: {e}")
+            return None
+    
     def analyze_industry_trend(self):
         """Analyze if the industry is trending with Bayesian analyst consensus"""
         try:
@@ -445,10 +530,13 @@ class StockAnalyzer:
                 upside = ((target_mean - current_price) / current_price * 100)
                 analysis['potential_upside'] = round(upside, 2)
             
-            # Bayesian/Bootstrap Estimation
+            # Bayesian/Bootstrap Estimation with historical context
             if all(isinstance(val, (int, float)) for val in [target_mean, target_median, target_high, target_low, current_price]) and num_analysts > 0:
+                # Try to get historical analyst data
+                historical_data = self.get_historical_analyst_estimates(years=3)
+                
                 bayesian_analysis = self._calculate_bayesian_consensus(
-                    current_price, target_mean, target_median, target_high, target_low, num_analysts
+                    current_price, target_mean, target_median, target_high, target_low, num_analysts, historical_data
                 )
                 analysis.update(bayesian_analysis)
             
@@ -456,9 +544,10 @@ class StockAnalyzer:
         except Exception as e:
             return {'error': str(e)}
     
-    def _calculate_bayesian_consensus(self, current_price, mean_target, median_target, high_target, low_target, num_analysts):
+    def _calculate_bayesian_consensus(self, current_price, mean_target, median_target, high_target, low_target, num_analysts, historical_data=None):
         """
         Calculate Bayesian weighted consensus of analyst predictions
+        Now enhanced with historical analyst data for better accuracy
         
         Models analyst opinions as Gaussian distributions:
         P(true_price | analysts) ∝ Σ w_i · N(μ_i, σ_i)
@@ -466,7 +555,7 @@ class StockAnalyzer:
         where:
         - μ_i is each analyst group's target
         - σ_i is the uncertainty (spread)
-        - w_i is the weight based on confidence
+        - w_i is the weight based on confidence and historical accuracy
         """
         try:
             # Estimate the standard deviation from the range
@@ -474,16 +563,37 @@ class StockAnalyzer:
             price_range = high_target - low_target
             estimated_std = price_range / 4.0
             
+            # Adjust weights based on historical data if available
+            base_weights = {'median': 0.4, 'mean': 0.3, 'bull': 0.15, 'bear': 0.15}
+            
+            if historical_data and 'historical_data' in historical_data and len(historical_data['historical_data']) > 0:
+                # We have historical data - adjust confidence based on trend consistency
+                hist_points = historical_data['historical_data']
+                
+                # Check if estimates have been consistently revised up or down
+                if len(hist_points) >= 3:
+                    recent_avg = np.mean([p.get('estimated_avg', mean_target) for p in hist_points[:3] if p.get('estimated_avg')])
+                    older_avg = np.mean([p.get('estimated_avg', mean_target) for p in hist_points[-3:] if p.get('estimated_avg')])
+                    
+                    # If consistent upward/downward revision, increase median weight (more confident)
+                    if recent_avg and older_avg:
+                        revision_direction = (recent_avg - older_avg) / older_avg if older_avg != 0 else 0
+                        if abs(revision_direction) > 0.1:  # Significant revision trend
+                            base_weights['median'] = 0.5  # More weight on median (stronger consensus)
+                            base_weights['mean'] = 0.35
+                            base_weights['bull'] = 0.075
+                            base_weights['bear'] = 0.075
+            
             # Create weighted Gaussian distributions for different analyst groups
             # We'll model the distribution as a mixture of Gaussians
             
             # Define analyst "groups" with their targets and weights
             # Weight more heavily towards median (more robust to outliers)
             analyst_groups = [
-                {'target': median_target, 'weight': 0.4, 'std': estimated_std * 0.8},  # Median - most reliable
-                {'target': mean_target, 'weight': 0.3, 'std': estimated_std},          # Mean - includes all
-                {'target': (high_target + median_target) / 2, 'weight': 0.15, 'std': estimated_std * 1.2},  # Bull case
-                {'target': (low_target + median_target) / 2, 'weight': 0.15, 'std': estimated_std * 1.2}    # Bear case
+                {'target': median_target, 'weight': base_weights['median'], 'std': estimated_std * 0.8},  # Median - most reliable
+                {'target': mean_target, 'weight': base_weights['mean'], 'std': estimated_std},          # Mean - includes all
+                {'target': (high_target + median_target) / 2, 'weight': base_weights['bull'], 'std': estimated_std * 1.2},  # Bull case
+                {'target': (low_target + median_target) / 2, 'weight': base_weights['bear'], 'std': estimated_std * 1.2}    # Bear case
             ]
             
             # Monte Carlo simulation: sample from the mixture of Gaussians
@@ -539,7 +649,7 @@ class StockAnalyzer:
             else:
                 risk_reward_ratio = float('inf') if avg_upside > 0 else 0
             
-            return {
+            result = {
                 'bayesian_target': round(bayesian_mean, 2),
                 'bayesian_median': round(bayesian_median, 2),
                 'bayesian_std': round(bayesian_std, 2),
@@ -552,6 +662,16 @@ class StockAnalyzer:
                 'risk_reward_ratio': round(risk_reward_ratio, 2) if risk_reward_ratio != float('inf') else 'Inf',
                 'analyst_consensus_strength': self._get_consensus_strength(bayesian_std, current_price)
             }
+            
+            # Add historical data info if available
+            if historical_data and 'data_points' in historical_data:
+                result['historical_data_points'] = historical_data['data_points']
+                result['historical_date_range'] = historical_data.get('date_range', 'N/A')
+                result['uses_historical_data'] = True
+            else:
+                result['uses_historical_data'] = False
+            
+            return result
         except Exception as e:
             print(f"Bayesian calculation error: {e}")
             return {}

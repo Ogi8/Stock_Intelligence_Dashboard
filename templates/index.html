@@ -894,6 +894,15 @@
                         <p style="color: #ccc; font-size: 0.95em; margin-bottom: 15px;">
                             Advanced statistical model that weights analyst opinions as Gaussian distributions, 
                             accounting for uncertainty and the full range of estimates.
+                            ${trend.uses_historical_data ? `
+                                <span style="color: #10b981; font-weight: 600;">
+                                    ✓ Enhanced with ${trend.historical_data_points || 'historical'} analyst estimates over ${trend.historical_date_range || '3 years'}
+                                </span>
+                            ` : `
+                                <span style="color: #f59e0b;">
+                                    ⚠ Using current analyst data only
+                                </span>
+                            `}
                         </p>
                         
                         <div class="info-grid">

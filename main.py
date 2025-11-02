@@ -751,9 +751,11 @@ class StockAnalyzer:
         except Exception as e:
             return {'error': str(e)}
 
-def search_reddit_mentions(ticker, limit=10):
-    """Search Reddit for stock mentions (requires Reddit API credentials)"""
-    # Note: To use this, you need to set up Reddit API credentials in .env file
+def search_reddit_mentions(ticker, limit=15):
+    """
+    Search Reddit for high-quality stock mentions with relevance filtering
+    Focuses on reliable subreddits and filters out spam/pump posts
+    """
     try:
         reddit_client_id = os.getenv('REDDIT_CLIENT_ID')
         reddit_client_secret = os.getenv('REDDIT_CLIENT_SECRET')
@@ -769,20 +771,117 @@ def search_reddit_mentions(ticker, limit=10):
             user_agent=reddit_user_agent
         )
         
+        # Prioritized subreddits by reliability
+        # Tier 1: High quality fundamental analysis
+        tier1_subs = ['investing', 'stocks', 'StockMarket', 'ValueInvesting', 'SecurityAnalysis']
+        # Tier 2: Active but mixed quality
+        tier2_subs = ['wallstreetbets', 'options', 'Daytrading']
+        
         mentions = []
-        subreddits = reddit.subreddit('wallstreetbets+stocks+investing+stockmarket')
+        seen_titles = set()  # Avoid duplicates
         
-        for submission in subreddits.search(ticker, limit=limit, sort='relevance', time_filter='week'):
-            mentions.append({
-                'title': submission.title,
-                'score': submission.score,
-                'url': f"https://reddit.com{submission.permalink}",
-                'created': datetime.fromtimestamp(submission.created_utc).strftime('%Y-%m-%d %H:%M'),
-                'num_comments': submission.num_comments
-            })
+        # Search tier 1 first (more reliable)
+        for subreddit_name in tier1_subs:
+            try:
+                subreddit = reddit.subreddit(subreddit_name)
+                for submission in subreddit.search(f'${ticker} OR {ticker}', limit=5, sort='relevance', time_filter='month'):
+                    
+                    # Quality filters
+                    if submission.title in seen_titles:
+                        continue
+                    
+                    # Filter out low-quality posts
+                    if submission.score < 5:  # Minimum upvotes
+                        continue
+                    
+                    # Filter spam keywords
+                    spam_keywords = ['moon', '🚀', 'pump', 'to the moon', 'yolo', 'meme']
+                    title_lower = submission.title.lower()
+                    spam_count = sum(1 for keyword in spam_keywords if keyword in title_lower)
+                    
+                    # Check if ticker is actually mentioned (not just in broader discussion)
+                    ticker_variants = [f'${ticker}', ticker, ticker.lower()]
+                    has_ticker = any(variant in submission.title or variant in (submission.selftext or '') for variant in ticker_variants)
+                    
+                    if not has_ticker:
+                        continue
+                    
+                    # Calculate quality score
+                    quality_score = submission.score + (submission.num_comments * 2)
+                    if spam_count >= 2:
+                        quality_score *= 0.5  # Penalize spam
+                    
+                    seen_titles.add(submission.title)
+                    mentions.append({
+                        'title': submission.title,
+                        'score': submission.score,
+                        'url': f"https://reddit.com{submission.permalink}",
+                        'created': datetime.fromtimestamp(submission.created_utc).strftime('%Y-%m-%d %H:%M'),
+                        'num_comments': submission.num_comments,
+                        'subreddit': subreddit_name,
+                        'quality_score': quality_score,
+                        'tier': 1,
+                        'is_spam': spam_count >= 2
+                    })
+            except Exception as e:
+                print(f"Error searching r/{subreddit_name}: {e}")
+                continue
         
-        return mentions
+        # Search tier 2 if we need more results
+        if len(mentions) < 5:
+            for subreddit_name in tier2_subs:
+                try:
+                    subreddit = reddit.subreddit(subreddit_name)
+                    for submission in subreddit.search(f'${ticker} OR {ticker}', limit=5, sort='hot', time_filter='week'):
+                        
+                        if submission.title in seen_titles:
+                            continue
+                        
+                        if submission.score < 10:  # Higher threshold for tier 2
+                            continue
+                        
+                        spam_keywords = ['moon', '🚀', 'pump', 'to the moon', 'yolo', 'meme']
+                        title_lower = submission.title.lower()
+                        spam_count = sum(1 for keyword in spam_keywords if keyword in title_lower)
+                        
+                        ticker_variants = [f'${ticker}', ticker, ticker.lower()]
+                        has_ticker = any(variant in submission.title or variant in (submission.selftext or '') for variant in ticker_variants)
+                        
+                        if not has_ticker:
+                            continue
+                        
+                        quality_score = submission.score + (submission.num_comments * 2)
+                        if spam_count >= 2:
+                            quality_score *= 0.3  # Heavy penalty for tier 2 spam
+                        
+                        seen_titles.add(submission.title)
+                        mentions.append({
+                            'title': submission.title,
+                            'score': submission.score,
+                            'url': f"https://reddit.com{submission.permalink}",
+                            'created': datetime.fromtimestamp(submission.created_utc).strftime('%Y-%m-%d %H:%M'),
+                            'num_comments': submission.num_comments,
+                            'subreddit': subreddit_name,
+                            'quality_score': quality_score,
+                            'tier': 2,
+                            'is_spam': spam_count >= 2
+                        })
+                except Exception as e:
+                    print(f"Error searching r/{subreddit_name}: {e}")
+                    continue
+        
+        # Sort by quality score and return top results
+        mentions = sorted(mentions, key=lambda x: x['quality_score'], reverse=True)[:limit]
+        
+        # Filter out spam from final results (unless it's all we have)
+        clean_mentions = [m for m in mentions if not m['is_spam']]
+        if len(clean_mentions) >= 3:
+            mentions = clean_mentions
+        
+        return mentions if mentions else {'info': f'No quality Reddit discussions found for ${ticker} in the past month'}
+        
     except Exception as e:
+        print(f"Reddit search error: {e}")
         return {'error': str(e)}
 
 @app.route('/')

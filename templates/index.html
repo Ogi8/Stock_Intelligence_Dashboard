@@ -1154,16 +1154,34 @@
                 html += `
                     <div class="card">
                         <h2>💬 Reddit Discussions</h2>
+                        <p style="color: #aaa; margin-bottom: 15px; font-size: 0.9em;">
+                            Filtered for quality discussions from reliable subreddits. Spam and low-effort posts removed.
+                        </p>
                         ${reddit.map(item => `
-                            <div class="reddit-item">
-                                <span class="score">↑ ${item.score}</span>
-                                <strong>${item.title}</strong>
+                            <div class="reddit-item" style="border-left-color: ${item.tier === 1 ? '#10b981' : '#f59e0b'};">
+                                <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 8px;">
+                                    <div style="flex: 1;">
+                                        <span class="score" style="background: ${item.tier === 1 ? '#10b981' : '#f59e0b'};">↑ ${item.score}</span>
+                                        <strong style="margin-left: 10px;">${item.title}</strong>
+                                    </div>
+                                    <span style="background: ${item.tier === 1 ? 'rgba(16, 185, 129, 0.2)' : 'rgba(245, 158, 11, 0.2)'}; 
+                                                 color: ${item.tier === 1 ? '#10b981' : '#f59e0b'}; 
+                                                 padding: 3px 8px; border-radius: 5px; 
+                                                 font-size: 0.75em; font-weight: bold; white-space: nowrap;">
+                                        r/${item.subreddit}
+                                    </span>
+                                </div>
                                 <div class="meta" style="margin-top: 5px;">
-                                    ${item.num_comments} comments • ${item.created}
-                                    <br><a href="${item.url}" target="_blank">View on Reddit →</a>
+                                    💬 ${item.num_comments} comments • 📅 ${item.created} • Quality: ${Math.round(item.quality_score)}
+                                    <br><a href="${item.url}" target="_blank">View discussion →</a>
                                 </div>
                             </div>
                         `).join('')}
+                        <div style="margin-top: 15px; padding: 10px; background: #2d2020; border-radius: 8px; font-size: 0.85em; color: #999;">
+                            <strong>Quality Tiers:</strong> 
+                            <span style="color: #10b981;">●</span> Tier 1: Fundamental analysis (r/investing, r/stocks, r/ValueInvesting) • 
+                            <span style="color: #f59e0b;">●</span> Tier 2: Active trading (r/wallstreetbets, r/options)
+                        </div>
                     </div>
                 `;
             } else if (reddit && reddit.info) {
@@ -1172,9 +1190,9 @@
                         <h2>💬 Reddit Discussions</h2>
                         <p style="color: #999;">${reddit.info}</p>
                         <p style="margin-top: 10px; font-size: 0.9em; color: #aaa;">
-                            To enable Reddit integration, create a Reddit app at 
-                            <a href="https://www.reddit.com/prefs/apps" target="_blank" style="color: #ff9999;">reddit.com/prefs/apps</a>
-                            and add your credentials to a .env file.
+                            ${reddit.info.includes('not configured') ? 
+                                'To enable Reddit integration, create a Reddit app at <a href="https://www.reddit.com/prefs/apps" target="_blank" style="color: #ff9999;">reddit.com/prefs/apps</a> and add your credentials to a .env file.' 
+                                : 'Try searching for more popular tickers like AAPL, TSLA, NVDA, etc.'}
                         </p>
                     </div>
                 `;

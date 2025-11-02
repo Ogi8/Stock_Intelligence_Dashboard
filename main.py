@@ -12,6 +12,10 @@ import os
 from dotenv import load_dotenv
 import numpy as np
 from scipy import stats
+import time
+
+# Configure yfinance to be more reliable
+yf.pdr_override()
 
 load_dotenv()
 
@@ -32,17 +36,57 @@ FMP_API_KEY = os.getenv('FMP_API_KEY')
 class StockAnalyzer:
     def __init__(self, ticker):
         self.ticker = ticker.upper()
+        # Add timeout and retry logic for better reliability on cloud platforms
         self.stock = yf.Ticker(self.ticker)
         
     def get_basic_info(self):
-        """Get basic stock information"""
+        """Get basic stock information with retry logic"""
+        max_retries = 3
+        info = None
+        
+        for attempt in range(max_retries):
+            try:
+                # Try to fetch info with timeout
+                info = self.stock.info
+                
+                # Debug: print what we got
+                print(f"Attempt {attempt + 1}: Info keys for {self.ticker}: {len(info.keys()) if info else 0} keys")
+                
+                # Check if we got valid data - yfinance returns minimal dict if ticker invalid
+                if not info or len(info) < 5:
+                    if attempt < max_retries - 1:
+                        print(f"Insufficient data, retrying in {attempt + 1} seconds...")
+                        time.sleep(attempt + 1)
+                        # Recreate ticker object for fresh connection
+                        self.stock = yf.Ticker(self.ticker)
+                        continue
+                    
+                    # Last attempt - try to get history to verify ticker exists
+                    print(f"Final attempt: checking history for {self.ticker}")
+                    hist = self.stock.history(period='5d')
+                    if hist.empty:
+                        return {'error': f'No data available for ticker "{self.ticker}". Ticker may be invalid or Yahoo Finance is temporarily unavailable.'}
+                    # If we have history but minimal info, try to build response from history
+                    if not hist.empty and len(info) < 5:
+                        return {'error': f'Limited data for "{self.ticker}". Try again in a moment or use a different ticker.'}
+                
+                # If we got here, we have good data
+                break
+                
+            except Exception as e:
+                print(f"Attempt {attempt + 1} failed with error: {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(attempt + 1)
+                    self.stock = yf.Ticker(self.ticker)
+                    continue
+                else:
+                    return {'error': f'Failed to fetch data for "{self.ticker}": {str(e)}'}
+        
+        # If we still don't have info after all retries
+        if not info or len(info) < 5:
+            return {'error': f'Unable to fetch data for "{self.ticker}" after {max_retries} attempts'}
+        
         try:
-            info = self.stock.info
-            
-            # Check if we got valid data
-            if not info or len(info) < 5:
-                return {'error': 'No data available for this ticker'}
-            
             # Helper function to safely get values and handle NaN
             def safe_get(key, default='N/A'):
                 value = info.get(key, default)

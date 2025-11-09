@@ -739,7 +739,35 @@
                         <h2>🌍 Industry Market Outlook</h2>
                         <p style="color: #aaa; margin-bottom: 20px; font-size: 0.95em;">
                             Market analysis for ${insights.industry_name} industry • Data: ${insights.data_source}
+                            ${insights.primary_display_note ? `<br><span style="color: #10b981;">🎯 ${insights.primary_display_note}</span>` : ''}
                         </p>
+                        
+                        ${insights.secondary_industries && insights.secondary_industries.length > 0 ? `
+                        <div style="margin-bottom: 20px; padding: 15px; background: linear-gradient(135deg, #1f4a2f 0%, #142d1a 100%); 
+                                    border-radius: 10px; border-left: 4px solid #10b981;">
+                            <h4 style="color: #10b981; margin: 0 0 10px 0;">
+                                🔍 Multi-Industry Exposure Detected
+                            </h4>
+                            <p style="color: #ddd; margin-bottom: 10px; font-size: 0.95em;">
+                                AI analysis identified this company serves ${insights.secondary_industries.length + 1} high-growth industries:
+                            </p>
+                            <div style="display: flex; flex-wrap: wrap; gap: 10px;">
+                                <div style="background: rgba(16, 185, 129, 0.2); padding: 8px 15px; border-radius: 20px; 
+                                            border: 1px solid #10b981; font-size: 0.9em; color: #10b981; font-weight: 600;">
+                                    📊 ${insights.industry_name} (Primary)
+                                </div>
+                                ${insights.secondary_industries.map(sec => `
+                                    <div style="background: rgba(59, 130, 246, 0.2); padding: 8px 15px; border-radius: 20px; 
+                                                border: 1px solid #3b82f6; font-size: 0.9em; color: #3b82f6; font-weight: 600;">
+                                        🚀 ${sec.name} (${sec.cagr} CAGR)
+                                    </div>
+                                `).join('')}
+                            </div>
+                            <p style="color: #aaa; margin-top: 10px; font-size: 0.85em;">
+                                <strong>Note:</strong> Growth projections below use the highest CAGR industry for conservative estimation.
+                            </p>
+                        </div>
+                        ` : ''}
                         
                         <div class="info-grid">
                             <div class="info-item" style="border-left-color: #28846b;">

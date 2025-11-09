@@ -999,11 +999,67 @@ class StockAnalyzer:
         except Exception as e:
             return {'error': str(e)}
     
-    def get_industry_insights(self):
+    def detect_secondary_industries(self, news_items):
         """
-        Get industry market insights based on sector/industry.
+        Detect secondary industries based on news content keywords.
+        This identifies when a company serves multiple industries (e.g., semiconductors + AI).
+        Returns list of detected industry names.
+        """
+        secondary_industries = []
+        
+        # Combine all news text for analysis
+        combined_text = ''
+        for item in news_items[:30]:  # Check recent news
+            combined_text += f"{item.get('title', '')} {item.get('summary', '')} ".lower()
+        
+        # AI/Machine Learning Industry Detection
+        ai_keywords = [
+            'artificial intelligence', ' ai ', 'machine learning', 'deep learning',
+            'neural network', 'generative ai', 'large language model', 'llm',
+            'ai chip', 'ai accelerator', 'gpu', 'hbm', 'high bandwidth memory',
+            'ai infrastructure', 'ai datacenter', 'ai training', 'ai inference'
+        ]
+        ai_matches = sum(1 for kw in ai_keywords if kw in combined_text)
+        if ai_matches >= 2:  # At least 2 AI-related mentions
+            secondary_industries.append('ai_infrastructure')
+        
+        # Cloud/Data Center Industry Detection
+        cloud_keywords = [
+            'data center', 'datacenter', 'cloud computing', 'cloud infrastructure',
+            'hyperscale', 'server', 'enterprise computing', 'edge computing',
+            'hybrid cloud', 'cloud services', 'infrastructure as a service'
+        ]
+        cloud_matches = sum(1 for kw in cloud_keywords if kw in combined_text)
+        if cloud_matches >= 2:
+            secondary_industries.append('cloud_computing')
+        
+        # Autonomous/EV Industry Detection
+        auto_keywords = [
+            'autonomous', 'self-driving', 'adas', 'electric vehicle', 'ev ',
+            'automotive', 'vehicle electrification', 'battery', 'powertrain'
+        ]
+        auto_matches = sum(1 for kw in auto_keywords if kw in combined_text)
+        if auto_matches >= 2:
+            secondary_industries.append('electric_vehicles')
+        
+        # 5G/Telecom Infrastructure Detection
+        telecom_keywords = [
+            '5g', '6g', 'telecommunications', 'network infrastructure',
+            'base station', 'wireless', 'cellular', 'spectrum'
+        ]
+        telecom_matches = sum(1 for kw in telecom_keywords if kw in combined_text)
+        if telecom_matches >= 2:
+            secondary_industries.append('telecommunications')
+        
+        return secondary_industries
+    
+    def get_industry_insights(self, news_items=None):
+        """
+        Get industry market insights based on sector/industry AND detect secondary industries from news.
         Data compiled from public sources: Grand View Research, Fortune Business Insights,
         Mordor Intelligence, IBISWorld reports, and industry publications (2024-2025).
+        
+        Now intelligently detects when companies serve multiple industries (e.g., Semiconductors + AI)
         """
         try:
             info = self.stock.info
@@ -1057,6 +1113,24 @@ class StockAnalyzer:
                     'challenges': ['Data sovereignty', 'Vendor lock-in', 'Security compliance'],
                     'source': 'MarketsandMarkets 2024'
                 },
+                'ai_infrastructure': {
+                    'market_size_2024': 147.0,  # Billion USD
+                    'projected_2030': 732.0,
+                    'cagr': '30.5%',
+                    'growth_drivers': ['GenAI explosion', 'Enterprise AI adoption', 'LLM training demand', 'Edge AI deployment'],
+                    'key_trends': ['GPU clusters', 'HBM memory adoption', 'AI-specific chips', 'Liquid cooling'],
+                    'challenges': ['Power consumption', 'Chip supply constraints', 'Cooling requirements'],
+                    'source': 'Grand View Research 2024 (AI Infrastructure)'
+                },
+                'telecommunications': {
+                    'market_size_2024': 1850.0,
+                    'projected_2030': 2560.0,
+                    'cagr': '5.5%',
+                    'growth_drivers': ['5G rollout', 'Network densification', 'Edge computing', 'Private networks'],
+                    'key_trends': ['Open RAN', 'Network slicing', '6G research', 'Satellite integration'],
+                    'challenges': ['Capex burden', 'Spectrum costs', 'Competition'],
+                    'source': 'GSMA Intelligence 2024'
+                },
                 'biotechnology': {
                     'market_size_2024': 1537.0,
                     'projected_2030': 3440.0,
@@ -1079,26 +1153,65 @@ class StockAnalyzer:
             
             # Try to match industry
             matched_data = None
+            primary_industry_name = None
             for key, data in industry_data.items():
                 if key in industry or key in sector:
                     matched_data = data
+                    primary_industry_name = key
                     break
+            
+            # Detect secondary industries from news content
+            secondary_industries = []
+            best_growth_rate = None
+            best_industry_data = matched_data
+            best_industry_name = primary_industry_name
+            
+            if news_items and matched_data:
+                detected_industries = self.detect_secondary_industries(news_items)
+                
+                for sec_ind in detected_industries:
+                    if sec_ind in industry_data and sec_ind != primary_industry_name:
+                        sec_data = industry_data[sec_ind]
+                        secondary_industries.append({
+                            'name': sec_ind.replace('_', ' ').title(),
+                            'cagr': sec_data['cagr'],
+                            'detected_from': 'news_analysis'
+                        })
+                        
+                        # Use the highest growth industry for scoring
+                        sec_cagr = float(sec_data['cagr'].replace('%', ''))
+                        primary_cagr = float(matched_data['cagr'].replace('%', ''))
+                        
+                        if best_growth_rate is None or sec_cagr > best_growth_rate:
+                            best_growth_rate = sec_cagr
+                            best_industry_data = sec_data
+                            best_industry_name = sec_ind
             
             if not matched_data:
                 return {'has_data': False, 'message': f'No market data available for industry: {industry}'}
             
-            return {
+            # Use the best (highest growth) industry data for the response
+            response = {
                 'has_data': True,
-                'industry_name': industry.title(),
-                'market_size_2024': matched_data['market_size_2024'],
-                'projected_2030': matched_data['projected_2030'],
-                'cagr': matched_data['cagr'],
-                'growth_multiplier': round(matched_data['projected_2030'] / matched_data['market_size_2024'], 1),
-                'growth_drivers': matched_data['growth_drivers'],
-                'key_trends': matched_data['key_trends'],
-                'challenges': matched_data['challenges'],
-                'data_source': matched_data['source']
+                'industry_name': (primary_industry_name or industry).replace('_', ' ').title(),
+                'market_size_2024': best_industry_data['market_size_2024'],
+                'projected_2030': best_industry_data['projected_2030'],
+                'cagr': best_industry_data['cagr'],
+                'growth_multiplier': round(best_industry_data['projected_2030'] / best_industry_data['market_size_2024'], 1),
+                'growth_drivers': best_industry_data['growth_drivers'],
+                'key_trends': best_industry_data['key_trends'],
+                'challenges': best_industry_data['challenges'],
+                'data_source': best_industry_data['source']
             }
+            
+            # Add secondary industry information if detected
+            if secondary_industries:
+                response['secondary_industries'] = secondary_industries
+                response['multi_industry_note'] = f"Also serves {len(secondary_industries)} additional high-growth industry/industries"
+                if best_industry_name != primary_industry_name:
+                    response['primary_display_note'] = f"Using {best_industry_name.replace('_', ' ').title()} growth data (highest CAGR)"
+            
+            return response
             
         except Exception as e:
             print(f"Industry insights error: {e}")
@@ -1267,6 +1380,10 @@ def search_reddit_mentions(ticker, company_name=None, limit=15):
 def index():
     return render_template('index.html')
 
+@app.route('/test')
+def test():
+    return render_template('test.html')
+
 @app.route('/analyze', methods=['POST'])
 def analyze():
     data = request.get_json()
@@ -1312,8 +1429,8 @@ def analyze():
         news = analyzer.get_news()
         industry_trend = analyzer.analyze_industry_trend()
         
-        # Get industry insights first (needed for business outlook)
-        industry_insights = analyzer.get_industry_insights()
+        # Get industry insights with news analysis for multi-industry detection
+        industry_insights = analyzer.get_industry_insights(news_items=news)
         
         # Pass industry insights to business outlook for comprehensive scoring
         business_outlook = analyzer.get_business_outlook(days=90, industry_insights=industry_insights)

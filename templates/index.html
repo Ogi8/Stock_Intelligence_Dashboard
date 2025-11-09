@@ -476,11 +476,22 @@
     </div>
 
     <script>
-        // Allow Enter key to trigger search
-        document.getElementById('tickerInput').addEventListener('keypress', function(e) {
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                analyzeStock();
+        // Wait for DOM to be ready
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('DOM loaded, attaching event listeners');
+            
+            // Allow Enter key to trigger search
+            const tickerInput = document.getElementById('tickerInput');
+            if (tickerInput) {
+                tickerInput.addEventListener('keypress', function(e) {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        analyzeStock();
+                    }
+                });
+                console.log('Enter key listener attached');
+            } else {
+                console.error('tickerInput not found!');
             }
         });
 

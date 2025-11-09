@@ -1337,26 +1337,6 @@
             }
 
             // News
-                                    </span>
-                                </div>
-                                <div class="meta" style="margin-top: 8px;">
-                                    Keyword: "${ev.keyword}" • ${ev.date}
-                                </div>
-                                ${ev.link ? `<a href="${ev.link}" target="_blank">Read article →</a>` : ''}
-                            </div>
-                        `).join('')}
-                        ` : '<p style="margin-top:15px; color: #999;">No strong booking/demand signals detected in recent news.</p>'}
-                        
-                        <div style="margin-top: 20px; padding: 12px; background: #2d2020; border-radius: 8px; font-size: 0.9em; color: #aaa;">
-                            <strong>Note:</strong> This analysis is based on keyword matching in recent news. 
-                            A high score suggests positive business momentum, but doesn't indicate whether the market has already priced it in. 
-                            Compare with the analyst consensus to gauge market expectations.
-                        </div>
-                    </div>
-                `;
-            }
-
-            // News
             if (news && Array.isArray(news) && news.length > 0) {
                 const visibleNews = news.slice(0, 3);
                 const hiddenNews = news.slice(3);

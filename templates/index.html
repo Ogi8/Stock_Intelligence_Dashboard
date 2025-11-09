@@ -3,6 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <title>Stock Intelligence Dashboard</title>
     <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
     <style>
@@ -166,13 +169,15 @@
             font-weight: 600;
             transition: all 0.3s ease;
             margin-left: 10px;
-            display: none;
+            display: inline-block;
+            opacity: 0.5;
         }
 
         .reset-btn:hover {
             background: linear-gradient(135deg, #6b2828 0%, #4a1f1f 100%);
             transform: translateY(-2px);
             box-shadow: 0 5px 15px rgba(107, 40, 40, 0.6);
+            opacity: 1;
         }
 
         .reset-btn:active {
@@ -180,7 +185,7 @@
         }
 
         .reset-btn.visible {
-            display: inline-block;
+            opacity: 1;
         }
 
         .results {
@@ -538,10 +543,36 @@
     </div>
 
     <script>
-        // Allow Enter key to trigger search
-        document.getElementById('tickerInput').addEventListener('keypress', function(e) {
-            if (e.key === 'Enter') {
-                analyzeStock();
+        // Wait for DOM to be fully loaded
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('=== DOM LOADED - JavaScript is working! ===');
+            
+            // Allow Enter key to trigger search
+            const tickerInput = document.getElementById('tickerInput');
+            console.log('tickerInput element:', tickerInput);
+            
+            if (tickerInput) {
+                tickerInput.addEventListener('keypress', function(e) {
+                    console.log('Key pressed:', e.key);
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        console.log('Enter key detected, calling analyzeStock()');
+                        analyzeStock();
+                    }
+                });
+                
+                // Focus on input when page loads
+                tickerInput.focus();
+                console.log('Input focused');
+            } else {
+                console.error('ERROR: tickerInput element not found!');
+            }
+            
+            // Also test the analyze button
+            const analyzeBtn = document.getElementById('analyzeBtn');
+            console.log('analyzeBtn element:', analyzeBtn);
+            if (!analyzeBtn) {
+                console.error('ERROR: analyzeBtn element not found!');
             }
         });
 
@@ -584,7 +615,10 @@
         }
 
         async function analyzeStock() {
+            console.log('analyzeStock() called');
             const ticker = document.getElementById('tickerInput').value.trim().toUpperCase();
+            console.log('Ticker:', ticker);
+            
             if (!ticker) {
                 alert('Please enter a stock ticker');
                 return;
@@ -595,11 +629,15 @@
             const resetBtn = document.getElementById('resetBtn');
             const analyzeBtn = document.getElementById('analyzeBtn');
             
+            console.log('Elements found:', { loading, results, resetBtn, analyzeBtn });
+            
             // Show loading, hide results
             loading.style.display = 'block';
             results.style.display = 'none';
             results.innerHTML = '';
             resetBtn.classList.add('visible');
+            
+            console.log('Loading displayed, reset button visible');
             
             // Disable analyze button during loading
             analyzeBtn.disabled = true;
@@ -608,6 +646,7 @@
             try {
                 // Step 1: Starting request
                 updateLoadingStep(1);
+                console.log('Step 1: Sending request to /analyze');
                 
                 const response = await fetch('/analyze', {
                     method: 'POST',

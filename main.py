@@ -578,8 +578,11 @@ class StockAnalyzer:
             traceback.print_exc()
             return []
     
-    def get_business_outlook(self, days=90):
-        """Analyze business outlook based on news and earnings keywords"""
+    def get_business_outlook(self, days=90, industry_insights=None):
+        """
+        Analyze business outlook based on news keywords AND industry market growth potential
+        Combines company-specific signals with broader industry tailwinds
+        """
         try:
             # Keywords indicating strong business outlook
             strong_keywords = [
@@ -600,7 +603,7 @@ class StockAnalyzer:
             # Get recent news
             news = self.get_news()
             
-            # Score calculation
+            # Score calculation (company-specific signals)
             strong_matches = []
             moderate_matches = []
             evidence = []
@@ -636,15 +639,59 @@ class StockAnalyzer:
                         })
                         break  # Only count once per article
             
-            # Calculate score (0-100)
-            strong_score = len(strong_matches) * 15  # Each strong match = 15 points
-            moderate_score = len(moderate_matches) * 8  # Each moderate match = 8 points
-            total_score = min(100, strong_score + moderate_score)
+            # Calculate base score from company signals (0-70)
+            strong_score = len(strong_matches) * 12  # Each strong match = 12 points
+            moderate_score = len(moderate_matches) * 6  # Each moderate match = 6 points
+            company_score = min(70, strong_score + moderate_score)
             
-            # Determine label
-            if total_score >= 60:
-                outlook_label = 'Strong'
+            # Add industry growth bonus (0-30 points)
+            industry_bonus = 0
+            industry_context = None
+            
+            if industry_insights and industry_insights.get('has_data'):
+                # Parse CAGR percentage (e.g., "12.5%" -> 12.5)
+                cagr_str = industry_insights.get('cagr', '0%').replace('%', '')
+                try:
+                    cagr_value = float(cagr_str)
+                    growth_multiplier = industry_insights.get('growth_multiplier', 1.0)
+                    
+                    # Industry scoring:
+                    # CAGR >= 15%: Strong growth (+25 points)
+                    # CAGR 10-15%: Good growth (+20 points)
+                    # CAGR 5-10%: Moderate growth (+12 points)
+                    # CAGR < 5%: Slow growth (+5 points)
+                    
+                    if cagr_value >= 15:
+                        industry_bonus = 25
+                        industry_context = f"Operates in high-growth industry ({cagr_str}% CAGR)"
+                    elif cagr_value >= 10:
+                        industry_bonus = 20
+                        industry_context = f"Benefits from strong industry growth ({cagr_str}% CAGR)"
+                    elif cagr_value >= 5:
+                        industry_bonus = 12
+                        industry_context = f"Industry showing moderate growth ({cagr_str}% CAGR)"
+                    else:
+                        industry_bonus = 5
+                        industry_context = f"Industry in slower growth phase ({cagr_str}% CAGR)"
+                    
+                    # Additional bonus for exceptional growth multiplier
+                    if growth_multiplier >= 3.0:
+                        industry_bonus = min(30, industry_bonus + 5)
+                        industry_context += f" • Market expected to {growth_multiplier}x by 2030"
+                    
+                except ValueError:
+                    pass
+            
+            # Total score (0-100)
+            total_score = min(100, company_score + industry_bonus)
+            
+            # Determine label based on combined score
+            if total_score >= 70:
+                outlook_label = 'Excellent'
                 outlook_color = '#10b981'
+            elif total_score >= 50:
+                outlook_label = 'Strong'
+                outlook_color = '#22c55e'
             elif total_score >= 30:
                 outlook_label = 'Moderate'
                 outlook_color = '#f59e0b'
@@ -657,11 +704,15 @@ class StockAnalyzer:
             
             return {
                 'outlook_score': total_score,
+                'company_score': company_score,
+                'industry_bonus': industry_bonus,
                 'outlook_label': outlook_label,
                 'outlook_color': outlook_color,
                 'strong_signals': len(strong_matches),
                 'moderate_signals': len(moderate_matches),
                 'evidence': evidence[:10],  # Top 10 pieces of evidence
+                'industry_context': industry_context,
+                'has_industry_data': industry_insights is not None and industry_insights.get('has_data', False),
                 'last_updated': datetime.now().strftime('%Y-%m-%d %H:%M')
             }
             
@@ -669,6 +720,8 @@ class StockAnalyzer:
             print(f"Business outlook error: {e}")
             return {
                 'outlook_score': 0,
+                'company_score': 0,
+                'industry_bonus': 0,
                 'outlook_label': 'Unknown',
                 'outlook_color': '#9ca3af',
                 'strong_signals': 0,
@@ -945,6 +998,111 @@ class StockAnalyzer:
             return status
         except Exception as e:
             return {'error': str(e)}
+    
+    def get_industry_insights(self):
+        """
+        Get industry market insights based on sector/industry.
+        Data compiled from public sources: Grand View Research, Fortune Business Insights,
+        Mordor Intelligence, IBISWorld reports, and industry publications (2024-2025).
+        """
+        try:
+            info = self.stock.info
+            industry = info.get('industry', '').lower()
+            sector = info.get('sector', '').lower()
+            
+            # Industry market data database (manually curated from public reports)
+            industry_data = {
+                'semiconductors': {
+                    'market_size_2024': 611.0,  # Billion USD
+                    'projected_2030': 1380.0,
+                    'cagr': '12.2%',
+                    'growth_drivers': ['AI acceleration', 'EV adoption', '5G/6G infrastructure', 'IoT expansion'],
+                    'key_trends': ['Advanced packaging', '3nm/2nm processes', 'Chiplet architecture', 'AI chips'],
+                    'challenges': ['Geopolitical tensions', 'Capex intensity', 'Cyclical demand'],
+                    'source': 'Grand View Research 2024'
+                },
+                'software': {
+                    'market_size_2024': 736.0,
+                    'projected_2030': 1497.0,
+                    'cagr': '12.5%',
+                    'growth_drivers': ['Cloud adoption', 'Digital transformation', 'AI/ML integration', 'SaaS expansion'],
+                    'key_trends': ['GenAI applications', 'Low-code platforms', 'API economy', 'Vertical SaaS'],
+                    'challenges': ['Market saturation', 'Price competition', 'Security concerns'],
+                    'source': 'Fortune Business Insights 2024'
+                },
+                'internet content': {
+                    'market_size_2024': 484.0,
+                    'projected_2030': 1089.0,
+                    'cagr': '14.5%',
+                    'growth_drivers': ['Video streaming growth', 'Social commerce', 'Creator economy', 'Mobile-first content'],
+                    'key_trends': ['Short-form video', 'Live streaming', 'AR/VR content', 'Personalization'],
+                    'challenges': ['Ad market volatility', 'Privacy regulations', 'Content moderation costs'],
+                    'source': 'Mordor Intelligence 2024'
+                },
+                'electric vehicles': {
+                    'market_size_2024': 562.0,
+                    'projected_2030': 1579.0,
+                    'cagr': '18.7%',
+                    'growth_drivers': ['Climate regulations', 'Battery cost reduction', 'Charging infrastructure', 'Government incentives'],
+                    'key_trends': ['Solid-state batteries', 'Autonomous features', 'Vehicle-to-grid', 'Platform sharing'],
+                    'challenges': ['Raw material costs', 'Competition intensity', 'Profitability pressure'],
+                    'source': 'Allied Market Research 2024'
+                },
+                'cloud computing': {
+                    'market_size_2024': 679.0,
+                    'projected_2030': 2432.0,
+                    'cagr': '23.8%',
+                    'growth_drivers': ['Hybrid cloud adoption', 'Edge computing', 'AI workloads', 'Enterprise migration'],
+                    'key_trends': ['Multi-cloud strategy', 'Serverless computing', 'Kubernetes adoption', 'FinOps'],
+                    'challenges': ['Data sovereignty', 'Vendor lock-in', 'Security compliance'],
+                    'source': 'MarketsandMarkets 2024'
+                },
+                'biotechnology': {
+                    'market_size_2024': 1537.0,
+                    'projected_2030': 3440.0,
+                    'cagr': '14.3%',
+                    'growth_drivers': ['Gene therapy advances', 'Personalized medicine', 'CRISPR applications', 'Aging population'],
+                    'key_trends': ['mRNA technology', 'CAR-T therapies', 'AI drug discovery', 'Biosimilars'],
+                    'challenges': ['Regulatory approval times', 'R&D costs', 'Patent cliffs'],
+                    'source': 'Grand View Research 2024'
+                },
+                'e-commerce': {
+                    'market_size_2024': 6310.0,
+                    'projected_2030': 16215.0,
+                    'cagr': '17.0%',
+                    'growth_drivers': ['Mobile commerce', 'Social commerce', 'Cross-border trade', 'Quick commerce'],
+                    'key_trends': ['Live shopping', 'AR try-on', 'Sustainable packaging', 'Same-day delivery'],
+                    'challenges': ['Last-mile costs', 'Returns management', 'Competition'],
+                    'source': 'Statista Market Insights 2024'
+                }
+            }
+            
+            # Try to match industry
+            matched_data = None
+            for key, data in industry_data.items():
+                if key in industry or key in sector:
+                    matched_data = data
+                    break
+            
+            if not matched_data:
+                return {'has_data': False, 'message': f'No market data available for industry: {industry}'}
+            
+            return {
+                'has_data': True,
+                'industry_name': industry.title(),
+                'market_size_2024': matched_data['market_size_2024'],
+                'projected_2030': matched_data['projected_2030'],
+                'cagr': matched_data['cagr'],
+                'growth_multiplier': round(matched_data['projected_2030'] / matched_data['market_size_2024'], 1),
+                'growth_drivers': matched_data['growth_drivers'],
+                'key_trends': matched_data['key_trends'],
+                'challenges': matched_data['challenges'],
+                'data_source': matched_data['source']
+            }
+            
+        except Exception as e:
+            print(f"Industry insights error: {e}")
+            return {'has_data': False, 'error': str(e)}
 
 def search_reddit_mentions(ticker, company_name=None, limit=15):
     """
@@ -1153,7 +1311,12 @@ def analyze():
         analyst_chart_data = analyzer.get_analyst_estimates_chart_data()
         news = analyzer.get_news()
         industry_trend = analyzer.analyze_industry_trend()
-        business_outlook = analyzer.get_business_outlook(days=90)
+        
+        # Get industry insights first (needed for business outlook)
+        industry_insights = analyzer.get_industry_insights()
+        
+        # Pass industry insights to business outlook for comprehensive scoring
+        business_outlook = analyzer.get_business_outlook(days=90, industry_insights=industry_insights)
         
         # Get company name for Reddit filtering
         company_name = basic_info.get('name', '')
@@ -1173,6 +1336,7 @@ def analyze():
             'business_outlook': business_outlook,
             'reddit_mentions': reddit_mentions,
             'profitability': profitability,
+            'industry_insights': industry_insights,
             'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         }
         

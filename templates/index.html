@@ -679,6 +679,91 @@
                 `;
             }
 
+            // Industry Market Insights
+            const insights = data.industry_insights;
+            if (insights && insights.has_data) {
+                html += `
+                    <div class="card">
+                        <h2>🌍 Industry Market Outlook</h2>
+                        <p style="color: #aaa; margin-bottom: 20px; font-size: 0.95em;">
+                            Market analysis for ${insights.industry_name} industry • Data: ${insights.data_source}
+                        </p>
+                        
+                        <div class="info-grid">
+                            <div class="info-item" style="border-left-color: #28846b;">
+                                <label>Market Size 2024</label>
+                                <div class="value" style="color: #10b981; font-size: 1.8em;">
+                                    $${insights.market_size_2024}B
+                                </div>
+                            </div>
+                            <div class="info-item" style="border-left-color: #28846b;">
+                                <label>Projected 2030</label>
+                                <div class="value" style="color: #3b82f6; font-size: 1.8em;">
+                                    $${insights.projected_2030}B
+                                </div>
+                            </div>
+                            <div class="info-item" style="border-left-color: #28846b;">
+                                <label>Growth Rate (CAGR)</label>
+                                <div class="value positive" style="font-size: 1.8em;">
+                                    ${insights.cagr}
+                                </div>
+                            </div>
+                            <div class="info-item" style="border-left-color: #28846b;">
+                                <label>Growth Multiplier</label>
+                                <div class="value" style="font-size: 1.8em;">
+                                    ${insights.growth_multiplier}x
+                                </div>
+                                <small style="color: #666; display: block; margin-top: 5px;">
+                                    Market expected to grow ${insights.growth_multiplier}x by 2030
+                                </small>
+                            </div>
+                        </div>
+                        
+                        ${insights.growth_drivers && insights.growth_drivers.length > 0 ? `
+                        <h3 style="margin-top: 25px; color: #10b981;">🚀 Key Growth Drivers</h3>
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-top: 15px;">
+                            ${insights.growth_drivers.map(driver => `
+                                <div style="background: linear-gradient(135deg, #1f4a2f 0%, #142d1a 100%); 
+                                            padding: 12px; border-radius: 8px; border-left: 3px solid #28846b;">
+                                    <span style="font-size: 0.95em;">✓ ${driver}</span>
+                                </div>
+                            `).join('')}
+                        </div>
+                        ` : ''}
+                        
+                        ${insights.key_trends && insights.key_trends.length > 0 ? `
+                        <h3 style="margin-top: 25px; color: #3b82f6;">📈 Emerging Trends</h3>
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-top: 15px;">
+                            ${insights.key_trends.map(trend => `
+                                <div style="background: linear-gradient(135deg, #1e3a5f 0%, #0f1e2e 100%); 
+                                            padding: 12px; border-radius: 8px; border-left: 3px solid #3b82f6;">
+                                    <span style="font-size: 0.95em;">• ${trend}</span>
+                                </div>
+                            `).join('')}
+                        </div>
+                        ` : ''}
+                        
+                        ${insights.challenges && insights.challenges.length > 0 ? `
+                        <h3 style="margin-top: 25px; color: #ef4444;">⚠️ Industry Challenges</h3>
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-top: 15px;">
+                            ${insights.challenges.map(challenge => `
+                                <div style="background: linear-gradient(135deg, #4a1f1f 0%, #2d1414 100%); 
+                                            padding: 12px; border-radius: 8px; border-left: 3px solid #ef4444;">
+                                    <span style="font-size: 0.95em;">⚡ ${challenge}</span>
+                                </div>
+                            `).join('')}
+                        </div>
+                        ` : ''}
+                        
+                        <div style="margin-top: 20px; padding: 12px; background: #2d2020; border-radius: 8px; font-size: 0.9em; color: #aaa;">
+                            <strong>Context:</strong> Industry growth doesn't guarantee individual company success. 
+                            Competitive positioning, execution, market share gains, and innovation determine whether this company 
+                            captures its fair share of the expanding market. Compare with company-specific analyst targets and business outlook signals.
+                        </div>
+                    </div>
+                `;
+            }
+
             // Financial Metrics Card
             if (metrics && !metrics.error) {
                 html += `
@@ -1107,21 +1192,53 @@
             if (outlook && !outlook.error) {
                 html += `
                     <div class="card">
-                        <h2>🔮 Business Outlook Signals</h2>
+                        <h2>🔮 Business Potential & Outlook</h2>
                         <p style="color: #aaa; margin-bottom: 20px; font-size: 0.95em;">
-                            Automated analysis of recent news for business strength indicators (bookings, backlog, demand signals)
+                            Combined assessment of company-specific signals and industry market growth potential
                         </p>
                         
                         <div class="info-grid">
                             <div class="info-item" style="border-left-color: ${outlook.outlook_color};">
-                                <span class="label">Outlook Strength:</span>
+                                <span class="label">Overall Business Potential:</span>
                                 <span class="value" style="color: ${outlook.outlook_color}; font-size: 1.8em;">
                                     ${outlook.outlook_label}
                                 </span>
                                 <div style="margin-top: 5px; font-size: 0.9em; color: #999;">
-                                    Score: ${outlook.outlook_score}/100
+                                    Total Score: ${outlook.outlook_score}/100
                                 </div>
                             </div>
+                            <div class="info-item">
+                                <span class="label">Company Signals:</span>
+                                <span class="value">${outlook.company_score}/70</span>
+                                <div style="margin-top: 5px; font-size: 0.85em; color: #888;">
+                                    Strong: ${outlook.strong_signals} | Moderate: ${outlook.moderate_signals}
+                                </div>
+                            </div>
+                            <div class="info-item">
+                                <span class="label">Industry Growth Bonus:</span>
+                                <span class="value ${outlook.industry_bonus > 15 ? 'positive' : ''}">+${outlook.industry_bonus}/30</span>
+                                <div style="margin-top: 5px; font-size: 0.85em; color: #888;">
+                                    ${outlook.has_industry_data ? 'Market growth factored in' : 'No industry data available'}
+                                </div>
+                            </div>
+                        </div>
+                        
+                        ${outlook.industry_context ? `
+                        <div style="margin-top: 20px; padding: 15px; background: linear-gradient(135deg, #1f4a2f 0%, #142d1a 100%); 
+                                    border-radius: 8px; border-left: 4px solid #28846b;">
+                            <div style="display: flex; align-items: center; gap: 10px;">
+                                <span style="font-size: 1.5em;">🌊</span>
+                                <div>
+                                    <strong style="color: #10b981; font-size: 1.05em;">Industry Tailwind</strong>
+                                    <p style="margin: 5px 0 0 0; color: #e0e0e0; font-size: 0.95em;">
+                                        ${outlook.industry_context}
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                        ` : ''}
+                        
+                        <div class="info-grid" style="margin-top: 20px;">
                             <div class="info-item">
                                 <span class="label">Strong Signals:</span>
                                 <span class="value">${outlook.strong_signals}</span>
@@ -1148,6 +1265,26 @@
                                                  color: white; padding: 3px 8px; border-radius: 5px; 
                                                  font-size: 0.75em; font-weight: bold; text-transform: uppercase;">
                                         ${ev.strength}
+                                    </span>
+                                </div>
+                                <div class="meta" style="margin-top: 8px;">
+                                    Keyword: "${ev.keyword}" • ${ev.date}
+                                </div>
+                                ${ev.link ? `<a href="${ev.link}" target="_blank">Read article →</a>` : ''}
+                            </div>
+                        `).join('')}
+                        ` : '<p style="margin-top:15px; color: #999;">No strong booking/demand signals detected in recent news.</p>'}
+                        
+                        <div style="margin-top: 20px; padding: 12px; background: #2d2020; border-radius: 8px; font-size: 0.9em; color: #aaa;">
+                            <strong>How to interpret:</strong> This combines company-specific demand signals (70 max points) 
+                            with industry market growth momentum (30 max points). A high score suggests both strong immediate business 
+                            activity AND favorable long-term market trends. Compare with analyst targets to see if the market has priced in this potential.
+                        </div>
+                    </div>
+                `;
+            }
+
+            // News
                                     </span>
                                 </div>
                                 <div class="meta" style="margin-top: 8px;">

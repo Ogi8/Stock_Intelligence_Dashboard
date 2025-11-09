@@ -541,7 +541,7 @@
                     <div class="info-grid">
                         <div class="metric-card">
                             <div class="label">Current Price</div>
-                            <div class="value">$${formatNumber(info.current_price)}</div>
+                            <div class="value" style="color: #ffc107;">$${formatNumber(info.current_price)}</div>
                         </div>
                         <div class="metric-card">
                             <div class="label">Market Cap</div>
@@ -848,11 +848,14 @@
                             </div>
                             <div class="info-item">
                                 <label>Current Price</label>
-                                <div class="value">$${formatNumber(trend.current_price)}</div>
+                                <div class="value" style="color: #ffc107;">$${formatNumber(trend.current_price)}</div>
                             </div>
                             <div class="info-item">
-                                <label>Mean Target Price</label>
+                                <label>Median Target Price</label>
                                 <div class="value">$${formatNumber(trend.analyst_target)}</div>
+                                <small style="color: #aaa; display: block; margin-top: 5px;">
+                                    More robust than mean (less affected by outliers)
+                                </small>
                             </div>
                             ${trend.num_analysts ? `
                             <div class="info-item">
@@ -863,13 +866,13 @@
                         
                         ${trend.potential_upside !== undefined ? `
                         <div style="margin-top: 20px; padding: 15px; background: ${trend.potential_upside >= 0 ? '#1a3d2a' : '#3d1a1a'}; border-radius: 10px; border-left: 4px solid ${trend.potential_upside >= 0 ? '#10b981' : '#ef4444'}; color: #f0f0f0;">
-                            <strong>Simple Target-Based Upside:</strong>
+                            <strong>Target-Based Upside Potential:</strong>
                             <span class="${trend.potential_upside > 0 ? 'positive' : 'negative'}" style="font-weight: bold; font-size: 1.2em; margin-left: 10px;">
                                 ${trend.potential_upside > 0 ? '+' : ''}${trend.potential_upside.toFixed(2)}%
                             </span>
                             <br>
                             <small style="color: #ccc; margin-top: 5px; display: block;">
-                                Based on mean analyst target vs. current price
+                                Based on median analyst target (${trend.num_analysts} analysts) vs. current price
                             </small>
                         </div>
                         ` : ''}

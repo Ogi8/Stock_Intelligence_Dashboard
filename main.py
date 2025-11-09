@@ -780,7 +780,8 @@ class StockAnalyzer:
                 'sector': sector,
                 'industry': industry,
                 'recommendation': info.get('recommendationKey', 'N/A'),
-                'analyst_target': target_mean,
+                'analyst_target': target_median,  # Use median instead of mean
+                'target_mean': target_mean,  # Keep mean for reference
                 'current_price': current_price,
                 'target_median': target_median,
                 'target_high': target_high,
@@ -788,9 +789,9 @@ class StockAnalyzer:
                 'num_analysts': num_analysts
             }
             
-            # Calculate basic potential upside
-            if isinstance(target_mean, (int, float)) and isinstance(current_price, (int, float)):
-                upside = ((target_mean - current_price) / current_price * 100)
+            # Calculate basic potential upside based on MEDIAN (more robust than mean)
+            if isinstance(target_median, (int, float)) and isinstance(current_price, (int, float)):
+                upside = ((target_median - current_price) / current_price * 100)
                 analysis['potential_upside'] = round(upside, 2)
             
             # Simple consensus analysis based on current analyst targets
